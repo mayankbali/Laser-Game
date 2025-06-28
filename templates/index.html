@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laser Obstacle Course</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #0a0a0a, #1a1a2e);
+            font-family: 'Courier New', monospace;
+            color: #00ff00;
+            overflow: hidden;
+        }
+
+        .game-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .info-panel {
+            display: flex;
+            gap: 30px;
+            align-items: center;
+            background: rgba(0, 255, 0, 0.1);
+            padding: 10px 20px;
+            border-radius: 10px;
+            border: 1px solid #00ff00;
+            box-shadow: 0 0 20px rgba(0, 255, 0, 0.3);
+        }
+
+        .level-display {
+            font-size: 24px;
+            font-weight: bold;
+            text-shadow: 0 0 10px #00ff00;
+        }
+
+        .player-count {
+            font-size: 18px;
+        }
+
+        .game-status {
+            font-size: 20px;
+            font-weight: bold;
+            color: #ffff00;
+            text-shadow: 0 0 10px #ffff00;
+        }
+
+        .projectile-warning {
+            color: #ff4444;
+            font-weight: bold;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        #gameCanvas {
+            border: 3px solid #00ff00;
+            border-radius: 10px;
+            background: #000011;
+            box-shadow: 0 0 30px rgba(0, 255, 0, 0.5);
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            margin-top: 10px;
+        }
+
+        button {
+            background: linear-gradient(45deg, #00aa00, #00ff00);
+            border: none;
+            color: #000;
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 255, 0, 0.3);
+        }
+
+        button:hover {
+            background: linear-gradient(45deg, #00ff00, #44ff44);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 255, 0, 0.5);
+        }
+
+        button:disabled {
+            background: #333;
+            color: #666;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .instructions {
+            text-align: center;
+            margin-top: 15px;
+            background: rgba(0, 255, 0, 0.05);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(0, 255, 0, 0.2);
+        }
+
+        .instructions h3 {
+            margin: 0 0 10px 0;
+            color: #00ffff;
+            text-shadow: 0 0 8px #00ffff;
+        }
+
+        .instructions p {
+            margin: 5px 0;
+            font-size: 14px;
+        }
+
+        .danger-text {
+            color: #ff4444;
+            font-weight: bold;
+        }
+
+        .warning-text {
+            color: #ffaa00;
+            font-weight: bold;
+        }
+
+        .keyboard-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            background: rgba(0, 255, 0, 0.1);
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 5px;
+        }
+
+        .key {
+            background: #333;
+            color: #00ff00;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-weight: bold;
+            border: 1px solid #00ff00;
+            min-width: 30px;
+            text-align: center;
+        }
+
+        .key.active {
+            background: #00ff00;
+            color: #000;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+        }
+
+        .my-player-info {
+            background: rgba(255, 255, 0, 0.1);
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ffff00;
+            margin-top: 10px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <div class="info-panel">
+            <div class="level-display">Level: <span id="levelNumber">1</span></div>
+            <div class="player-count">Players: <span id="playerCount">0</span></div>
+            <div class="game-status" id="gameStatus">Waiting for players...</div>
+            <div id="projectileWarning" class="projectile-warning" style="display: none;">
+                💥 PROJECTILES ACTIVE! 💥
+            </div>
+        </div>
+
+        <canvas id="gameCanvas" width="1000" height="700" tabindex="0"></canvas>
+
+        <div class="controls">
+            <button id="startButton">Start Game</button>
+            <div class="keyboard-controls">
+                <span style="color: #888;">Controls:</span>
+                <div class="key" id="keyW">W</div>
+                <div class="key" id="keyA">A</div>
+                <div class="key" id="keyS">S</div>
+                <div class="key" id="keyD">D</div>
+                <span style="color: #888; margin-left: 10px;">or Arrow Keys</span>
+            </div>
+        </div>
+
+        <div class="my-player-info" id="myPlayerInfo" style="display: none;">
+            You are Player <span id="myPlayerNumber">-</span> - 
+            Color: <span id="myPlayerColor" style="font-weight: bold;">-</span>
+        </div>
+
+        <div class="instructions">
+            <h3>🎯 Game Instructions</h3>
+            <p><strong>Objective:</strong> Navigate from the green start zone to the red finish zone</p>
+            <p><strong>Controls:</strong> Use WASD or Arrow Keys to move your colored dot</p>
+            <p><strong>Avoid:</strong> Red laser lines and rotating obstacles</p>
+            <p class="warning-text"><strong>Level 5+:</strong> Rotating lasers introduced</p>
+            <p class="warning-text"><strong>Level 10+:</strong> Fast rotating lasers enabled</p>
+            <p class="danger-text"><strong>Level 12+:</strong> Moving projectiles spawn from all directions!</p>
+            <p><strong>Win:</strong> First player to reach the finish zone wins the round</p>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const socket = io();
+
+        // Game state
+        let gameState = null;
+        let myPlayerId = null;
+        let mySessionId = null;
+
+        // Player position and movement
+        let playerPos = { x: 50, y: 100 };
+        let keys = {
+            w: false, a: false, s: false, d: false,
+            up: false, down: false, left: false, right: false
+        };
+        let playerSpeed = 3; // pixels per frame
+
+        // Visual effects
+        let animationFrame = 0;
+
+        // Socket event handlers
+        socket.on('player_init', (data) => {
+            myPlayerId = data.player_id;
+            mySessionId = data.session_id;
+            console.log(`Initialized as player ${myPlayerId} with session ${mySessionId}`);
+            
+            // Show player info once we know our ID
+            updateMyPlayerInfo();
+        });
+
+        socket.on('game_state', (data) => {
+            gameState = data;
+            updateUI();
+            render();
+        });
+
+        // Focus canvas for keyboard input
+        canvas.focus();
+
+        // Keyboard event handlers
+        document.addEventListener('keydown', (e) => {
+            e.preventDefault();
+            const key = e.key.toLowerCase();
+            
+            // Update key states
+            if (key === 'w') keys.w = true;
+            if (key === 'a') keys.a = true;
+            if (key === 's') keys.s = true;
+            if (key === 'd') keys.d = true;
+            if (key === 'arrowup') keys.up = true;
+            if (key === 'arrowdown') keys.down = true;
+            if (key === 'arrowleft') keys.left = true;
+            if (key === 'arrowright') keys.right = true;
+
+            updateKeyVisuals();
+        });
+
+        document.addEventListener('keyup', (e) => {
+            e.preventDefault();
+            const key = e.key.toLowerCase();
+            
+            // Update key states
+            if (key === 'w') keys.w = false;
+            if (key === 'a') keys.a = false;
+            if (key === 's') keys.s = false;
+            if (key === 'd') keys.d = false;
+            if (key === 'arrowup') keys.up = false;
+            if (key === 'arrowdown') keys.down = false;
+            if (key === 'arrowleft') keys.left = false;
+            if (key === 'arrowright') keys.right = false;
+
+            updateKeyVisuals();
+        });
+
+        function updateKeyVisuals() {
+            // Update visual feedback for pressed keys
+            document.getElementById('keyW').classList.toggle('active', keys.w || keys.up);
+            document.getElementById('keyA').classList.toggle('active', keys.a || keys.left);
+            document.getElementById('keyS').classList.toggle('active', keys.s || keys.down);
+            document.getElementById('keyD').classList.toggle('active', keys.d || keys.right);
+        }
+
+        function updateMyPlayerInfo() {
+            if (mySessionId && gameState && gameState.players[mySessionId]) {
+                const myPlayer = gameState.players[mySessionId];
+                const playerInfoDiv = document.getElementById('myPlayerInfo');
+                const playerNumberSpan = document.getElementById('myPlayerNumber');
+                const playerColorSpan = document.getElementById('myPlayerColor');
+                
+                playerNumberSpan.textContent = myPlayer.id;
+                
+                // Convert RGB array to readable color name
+                const colorName = getColorName(myPlayer.color);
+                playerColorSpan.textContent = colorName;
+                playerColorSpan.style.color = `rgb(${myPlayer.color[0]}, ${myPlayer.color[1]}, ${myPlayer.color[2]})`;
+                
+                playerInfoDiv.style.display = 'block';
+            }
+        }
+
+        function getColorName(rgbArray) {
+            const [r, g, b] = rgbArray;
+            
+            // Map RGB values to color names
+            if (r === 255 && g === 0 && b === 0) return 'Red';
+            if (r === 0 && g === 0 && b === 255) return 'Blue';
+            if (r === 0 && g === 255 && b === 0) return 'Green';
+            if (r === 255 && g === 255 && b === 0) return 'Yellow';
+            if (r === 255 && g === 0 && b === 255) return 'Purple';
+            if (r === 0 && g === 255 && b === 255) return 'Cyan';
+            if (r === 255 && g === 165 && b === 0) return 'Orange';
+            if (r === 255 && g === 192 && b === 203) return 'Pink';
+            
+            return `RGB(${r},${g},${b})`;
+        }
+
+        // Movement update loop
+        function updateMovement() {
+            if (!gameState || !mySessionId || !gameState.players[mySessionId]) {
+                return;
+            }
+
+            const player = gameState.players[mySessionId];
+            if (!player.alive || player.finished || gameState.game_state !== 'playing') {
+                return;
+            }
+
+            let dx = 0, dy = 0;
+
+            // Calculate movement based on pressed keys
+            if (keys.w || keys.up) dy -= playerSpeed;
+            if (keys.s || keys.down) dy += playerSpeed;
+            if (keys.a || keys.left) dx -= playerSpeed;
+            if (keys.d || keys.right) dx += playerSpeed;
+
+            // Apply movement if there's any
+            if (dx !== 0 || dy !== 0) {
+                playerPos.x = Math.max(8, Math.min(992, playerPos.x + dx));
+                playerPos.y = Math.max(8, Math.min(692, playerPos.y + dy));
+
+                // Send position to server
+                socket.emit('move_player', { pos: [playerPos.x, playerPos.y] });
+            }
+        }
+
+        // Start game button
+        document.getElementById('startButton').addEventListener('click', () => {
+            socket.emit('start_game');
+        });
+
+        function updateUI() {
+            if (!gameState) return;
+
+            // Update level display
+            document.getElementById('levelNumber').textContent = gameState.current_level;
+            
+            // Update player count
+            document.getElementById('playerCount').textContent = Object.keys(gameState.players).length;
+            
+            // Update game status
+            const statusElement = document.getElementById('gameStatus');
+            if (gameState.game_state === 'waiting') {
+                statusElement.textContent = 'Waiting for players...';
+                statusElement.style.color = '#ffff00';
+            } else if (gameState.game_state === 'playing') {
+                statusElement.textContent = 'Game in progress!';
+                statusElement.style.color = '#00ff00';
+            } else if (gameState.game_state === 'level_complete') {
+                if (gameState.winner !== null) {
+                    statusElement.textContent = `Player ${gameState.winner} wins!`;
+                    statusElement.style.color = '#ff8800';
+                } else {
+                    statusElement.textContent = 'All players eliminated!';
+                    statusElement.style.color = '#ff4444';
+                }
+            }
+
+            // Show projectile warning for levels 12+
+            const projectileWarning = document.getElementById('projectileWarning');
+            if (gameState.current_level >= 12) {
+                projectileWarning.style.display = 'block';
+            } else {
+                projectileWarning.style.display = 'none';
+            }
+
+            // Update start button
+            const startButton = document.getElementById('startButton');
+            startButton.disabled = gameState.game_state !== 'waiting' || Object.keys(gameState.players).length === 0;
+
+            // Update player position from server if we have a player
+            if (mySessionId && gameState.players[mySessionId] && gameState.players[mySessionId].pos) {
+                const serverPos = gameState.players[mySessionId].pos;
+                // Only update if we're not actively moving to avoid jitter
+                if (!Object.values(keys).some(k => k)) {
+                    playerPos.x = serverPos[0];
+                    playerPos.y = serverPos[1];
+                }
+            }
+
+            // Update my player info
+            updateMyPlayerInfo();
+        }
+
+        function render() {
+            if (!gameState) return;
+
+            animationFrame++;
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw start zone
+            ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+            ctx.fillRect(0, 0, 100, canvas.height);
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(0, 0, 100, canvas.height);
+
+            // Draw finish zone
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+            ctx.fillRect(canvas.width - 100, 0, 100, canvas.height);
+            ctx.strokeStyle = '#ff0000';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(canvas.width - 100, 0, 100, canvas.height);
+
+            // Draw zone labels
+            ctx.fillStyle = '#00ff00';
+            ctx.font = 'bold 16px Courier New';
+            ctx.textAlign = 'center';
+            ctx.fillText('START', 50, 30);
+            
+            ctx.fillStyle = '#ff0000';
+            ctx.fillText('FINISH', canvas.width - 50, 30);
+
+            // Draw laser lines
+            if (gameState.level_data && gameState.level_data.lasers) {
+                gameState.level_data.lasers.forEach(laser => {
+                    drawLaser(laser);
+                });
+            }
+
+            // Draw projectiles
+            if (gameState.level_data && gameState.level_data.projectiles) {
+                gameState.level_data.projectiles.forEach(projectile => {
+                    drawProjectile(projectile);
+                });
+            }
+
+            // Draw players
+            Object.entries(gameState.players).forEach(([sessionId, player]) => {
+                drawPlayer(player, sessionId === mySessionId);
+            });
+        }
+
+        function drawLaser(laser) {
+            const { start_pos, end_pos, animation_offset, is_rotating, is_fast } = laser;
+            
+            // Determine laser color and effects
+            let baseColor, glowColor;
+            if (is_fast) {
+                // Fast lasers are more intense and colorful
+                baseColor = '#ff0066';
+                glowColor = '#ff4488';
+            } else if (is_rotating) {
+                // Rotating lasers are orange-red
+                baseColor = '#ff4400';
+                glowColor = '#ff6622';
+            } else {
+                // Static lasers are red
+                baseColor = '#ff0000';
+                glowColor = '#ff4444';
+            }
+
+            // Calculate pulsing intensity
+            const pulseIntensity = 0.7 + 0.3 * Math.sin(animationFrame * 0.1 + animation_offset * Math.PI * 2);
+            
+            // Draw laser glow effect
+            ctx.save();
+            ctx.globalAlpha = pulseIntensity * 0.3;
+            ctx.strokeStyle = glowColor;
+            ctx.lineWidth = is_fast ? 12 : 8;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(start_pos[0], start_pos[1]);
+            ctx.lineTo(end_pos[0], end_pos[1]);
+            ctx.stroke();
+            
+            // Draw main laser beam
+            ctx.globalAlpha = pulseIntensity;
+            ctx.strokeStyle = baseColor;
+            ctx.lineWidth = is_fast ? 4 : 3;
+            ctx.beginPath();
+            ctx.moveTo(start_pos[0], start_pos[1]);
+            ctx.lineTo(end_pos[0], end_pos[1]);
+            ctx.stroke();
+            
+            // Draw laser core
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = is_fast ? '#ffffff' : '#ffaaaa';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(start_pos[0], start_pos[1]);
+            ctx.lineTo(end_pos[0], end_pos[1]);
+            ctx.stroke();
+            
+            ctx.restore();
+
+            // Draw rotation center for rotating lasers
+            if (is_rotating && laser.rotation_center) {
+                ctx.save();
+                ctx.fillStyle = is_fast ? '#ff0066' : '#ff4400';
+                ctx.globalAlpha = 0.5;
+                ctx.beginPath();
+                ctx.arc(laser.rotation_center[0], laser.rotation_center[1], 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        function drawProjectile(projectile) {
+            const { pos, size, spawn_side } = projectile;
+            
+            // Determine projectile color based on spawn side
+            let color, glowColor;
+            switch (spawn_side) {
+                case 'left':
+                    color = '#ff6600';
+                    glowColor = '#ff8833';
+                    break;
+                case 'right':
+                    color = '#6600ff';
+                    glowColor = '#8833ff';
+                    break;
+                case 'top':
+                    color = '#00ff66';
+                    glowColor = '#33ff88';
+                    break;
+                case 'bottom':
+                    color = '#ffff00';
+                    glowColor = '#ffff33';
+                    break;
+                default:
+                    color = '#ff0066';
+                    glowColor = '#ff3388';
+            }
+
+            ctx.save();
+            
+            // Draw projectile glow
+            ctx.globalAlpha = 0.6;
+            ctx.fillStyle = glowColor;
+            ctx.beginPath();
+            ctx.arc(pos[0], pos[1], size + 3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw main projectile body
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(pos[0], pos[1], size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw projectile core
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(pos[0], pos[1], size * 0.4, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Add sparkling effect
+            const sparkleOffset = animationFrame * 0.2;
+            for (let i = 0; i < 3; i++) {
+                const angle = (sparkleOffset + i * Math.PI * 2 / 3) % (Math.PI * 2);
+                const sparkleX = pos[0] + Math.cos(angle) * (size + 2);
+                const sparkleY = pos[1] + Math.sin(angle) * (size + 2);
+                
+                ctx.fillStyle = '#ffffff';
+                ctx.globalAlpha = 0.8 * Math.sin(sparkleOffset * 2 + i);
+                ctx.beginPath();
+                ctx.arc(sparkleX, sparkleY, 1, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            ctx.restore();
+        }
+
+        function drawPlayer(player, isMe) {
+            const { pos, color, alive, finished, trail } = player;
+            
+            // Don't draw if player doesn't have a position
+            if (!pos) return;
+
+            ctx.save();
+
+            // Draw trail
+            if (trail && trail.length > 0) {
+                ctx.strokeStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, 0.3)`;
+                ctx.lineWidth = 2;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                
+                ctx.beginPath();
+                for (let i = 0; i < trail.length; i++) {
+                    if (i === 0) {
+                        ctx.moveTo(trail[i][0], trail[i][1]);
+                    } else {
+                        ctx.lineTo(trail[i][0], trail[i][1]);
+                    }
+                }
+                ctx.stroke();
+            }
+
+            // Draw player
+            const playerSize = 8;
+            
+            if (alive) {
+                // Living player - Use the exact color from the server
+                ctx.fillStyle = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+                
+                // Add pulsing effect for current player
+                if (isMe) {
+                    const pulse = 1 + 0.3 * Math.sin(animationFrame * 0.2);
+                    ctx.save();
+                    ctx.scale(pulse, pulse);
+                    ctx.translate((pos[0] * (1 - pulse)) / pulse, (pos[1] * (1 - pulse)) / pulse);
+                }
+                
+                // Draw glow with player's color
+                ctx.shadowColor = `rgb(${color[0]}, ${color[1]}, ${color[2]})`;
+                ctx.shadowBlur = isMe ? 15 : 10;
+                
+                ctx.beginPath();
+                ctx.arc(pos[0], pos[1], playerSize, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw inner highlight
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = `rgba(255, 255, 255, ${isMe ? 0.8 : 0.5})`;
+                ctx.beginPath();
+                ctx.arc(pos[0], pos[1], playerSize * 0.4, 0, Math.PI * 2);
+                ctx.fill();
+                
+                if (isMe) {
+                    ctx.restore();
+                }
+                
+                // Draw player ID with contrasting color
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 12px Courier New';
+                ctx.textAlign = 'center';
+                ctx.strokeStyle = '#000000';
+                ctx.lineWidth = 2;
+                ctx.strokeText(player.id.toString(), pos[0], pos[1] - playerSize - 5);
+                ctx.fillText(player.id.toString(), pos[0], pos[1] - playerSize - 5);
+                
+            } else {
+                // Dead player (X mark) - Use player's color but faded
+                ctx.strokeStyle = `rgba(${color[0]}, ${color[1]}, ${color[2]}, 0.5)`;
+                ctx.lineWidth = 3;
+                ctx.lineCap = 'round';
+                
+                const size = playerSize;
+                ctx.beginPath();
+                ctx.moveTo(pos[0] - size, pos[1] - size);
+                ctx.lineTo(pos[0] + size, pos[1] + size);
+                ctx.moveTo(pos[0] + size, pos[1] - size);
+                ctx.lineTo(pos[0] - size, pos[1] + size);
+                ctx.stroke();
+            }
+
+            // Draw finish indicator
+            if (finished) {
+                ctx.fillStyle = '#ffff00';
+                ctx.font = 'bold 16px Courier New';
+                ctx.textAlign = 'center';
+                ctx.fillText('★', pos[0], pos[1] - playerSize - 20);
+            }
+
+            ctx.restore();
+        }
+
+        // Start render loop
+        function gameLoop() {
+            updateMovement();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        gameLoop();
+    </script>
+</body>
+</html>
